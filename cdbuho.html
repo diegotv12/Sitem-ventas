@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Registro de Ventas</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 2em; }
+    input, button, select { margin: 5px; padding: 8px; width: 100%; }
+    .hidden { display: none; }
+    .form-container, .login-container { max-width: 400px; margin: auto; }
+  </style>
+</head>
+<body>
+  <div class="login-container" id="loginSection">
+    <h2>Iniciar sesión</h2>
+    <input type="text" id="usuario" placeholder="Usuario (ej. buho o disriva)" required />
+    <input type="password" id="clave" placeholder="Clave del vendedor o contraseña" required />
+    <button onclick="login()">Entrar</button>
+    <p id="loginError" style="color:red;"></p>
+  </div>
+
+  <div class="form-container hidden" id="formSection">
+    <h2>Registro de Ventas</h2>
+    <input type="text" id="name" placeholder="Nombre del vendedor" required />
+    <input type="date" id="fecha" placeholder="Fecha de inscripción" required />
+    <input type="text" id="ubicacion" placeholder="Ubicación" />
+    <input type="text" id="ganancias" placeholder="Ganancias" />
+    <input type="text" id="tiempo" placeholder="Tiempo estimado de venta" />
+    <input type="file" id="foto" accept="image/*" />
+    <input type="text" id="producto" placeholder="Producto vendido" required />
+    <button onclick="enviarDatos()">Enviar</button>
+    <p id="formStatus" style="color:green;"></p>
+  </div>
+
+  <script>
+    const loginSection = document.getElementById('loginSection');
+    const formSection = document.getElementById('formSection');
+    const loginError = document.getElementById('loginError');
+    const formStatus = document.getElementById('formStatus');
+
+    const txtUrl = 'https://drive.google.com/uc?export=download&id=1yYkWATiSp_n2inJ4tvGlpGl9_j1MaM86';
+    const scriptURL = 'https://script.google.com/macros/s/AKfycbxqJDfAVNYFaGM0jKoE6d9LtizOw3WLLEX9WMW3I0vuP1IAz6BlRFYPUuH2IcqwdPLt/exec';
+
+    window.onload = () => {
+      const loggedIn = localStorage.getItem('vendedorLog');
+      if (loggedIn) {
+        loginSection.classList.add('hidden');
+        formSection.classList.remove('hidden');
+      }
+    };
+
+    function login() {
+      const user = document.getElementById('usuario').value.trim().toLowerCase();
+      const clave = document.getElementById('clave').value.trim();
+
+      if (user === 'disriva' && clave === '251078ss') {
+        localStorage.setItem('vendedorLog', 'disriva');
+        loginSection.classList.add('hidden');
+        formSection.classList.remove('hidden');
+        return;
+      }
+
+      if (user !== 'buho') {
+        loginError.textContent = 'Solo se permite el usuario "buho" o "disriva".';
+        return;
+      }
+
+      fetch(txtUrl)
+        .then(res => res.text())
+        .then(text => {
+          if (text.includes(clave)) {
+            localStorage.setItem('vendedorLog', clave);
+            loginSection.classList.add('hidden');
+            formSection.classList.remove('hidden');
+          } else {
+            loginError.textContent = 'Clave inválida.';
+          }
+        })
+        .catch(() => loginError.textContent = 'Error al validar usuario.');
+    }
+
+    function enviarDatos() {
+      const clave = localStorage.getItem('vendedorLog');
+      const name = document.getElementById('name').value;
+      const fecha = document.getElementById('fecha').value;
+      const ubicacion = document.getElementById('ubicacion').value;
+      const ganancias = document.getElementById('ganancias').value;
+      const tiempo = document.getElementById('tiempo').value;
+      const producto = document.getElementById('producto').value;
+
+      const data = new FormData();
+      data.append('clave', clave);
+      data.append('fecha', fecha);
+      data.append('producto', producto);
+      data.append('ganancia', ganancias);
+
+      fetch(scriptURL, {
+        method: 'POST',
+        body: data
+      })
+      .then(() => {
+        formStatus.textContent = 'Datos enviados correctamente.';
+        document.getElementById('name').value = '';
+        document.getElementById('producto').value = '';
+      })
+      .catch(() => formStatus.textContent = 'Error al enviar los datos.');
+    }
+  </script>
+</body>
+</html>
