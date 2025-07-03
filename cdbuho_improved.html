@@ -1,0 +1,874 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sistema de Ventas de Café v2</title>
+
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+
+    <!-- React -->
+    <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+    <!-- Leaflet (Map Library) -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+
+    <!-- Font Awesome for Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f5f0e1; /* Coffee-themed background */
+        }
+        .leaflet-container {
+            height: 350px;
+            width: 100%;
+            border-radius: 0.5rem;
+            z-index: 1;
+        }
+        ::-webkit-scrollbar { width: 8px; }
+        ::-webkit-scrollbar-track { background: #fdfaf6; }
+        ::-webkit-scrollbar-thumb { background: #a1887f; border-radius: 10px; }
+        ::-webkit-scrollbar-thumb:hover { background: #8d6e63; }
+    </style>
+</head>
+<body class="text-gray-800">
+
+    <div id="root"></div>
+
+    <script type="text/babel">
+        // ====================================================================
+        // MOCK BACKEND API - UPDATED
+        // ====================================================================
+        const FAKE_API = {
+            users: [
+                { id: 'admin1', userId: 'Disriva', nombre: 'Admin General', email: 'admin@cafe.com', rol: 'admin', password: 'Ss251078' },
+                { id: 'vendedor1', userId: '1234567', nombre: 'Cafetería Central', email: 'vendedor1@cafe.com', rol: 'vendedor', negocio: 'Café del Centro', telefono: '111222333', ubicacion: { lat: 20.6736, lng: -103.344 }, fotos: [], password: 'vendedor' },
+                { id: 'vendedor2', userId: '7654321', nombre: 'Panadería El Trigo', email: 'vendedor2@cafe.com', rol: 'vendedor', negocio: 'El Trigo Dorado', telefono: '444555666', ubicacion: { lat: 20.6780, lng: -103.349 }, fotos: [], password: 'vendedor' },
+            ],
+            products: [
+                { id: 'prod1', nombre: 'Café Molido 1kg', precio: 280, stock: 50, costoProduccion: 138, descripcion: 'Nuestro mejor grano, molido y listo para preparar.', foto: 'https://placehold.co/400x400/8d6e63/ffffff?text=Café+1kg' },
+                { id: 'prod2', nombre: 'Café Molido 500g', precio: 140, stock: 80, costoProduccion: 74, descripcion: 'La cantidad perfecta para disfrutar.', foto: 'https://placehold.co/400x400/a1887f/ffffff?text=Café+500g' },
+                { id: 'prod3', nombre: 'Café Molido 250g', precio: 70, stock: 120, costoProduccion: 37, descripcion: 'Ideal para probar nuestro sabor.', foto: 'https://placehold.co/400x400/bcaaa4/ffffff?text=Café+250g' },
+                { id: 'prod4', nombre: 'Café Molido 100g', precio: 35, stock: 200, costoProduccion: 20, descripcion: 'Una muestra de nuestro delicioso café.', foto: 'https://placehold.co/400x400/d7ccc8/ffffff?text=Café+100g' },
+            ],
+            sales: [],
+
+            // --- AUTHENTICATION ---
+            login: function(userId, password) {
+                return new Promise((resolve, reject) => {
+                    // Find user by userId and password, regardless of role initially for login
+                    const user = this.users.find(u => u.userId === userId && u.password === password);
+                    setTimeout(() => { // Simulate network delay
+                        if (user) {
+                            // If user is found, then we can check their role for further actions.
+                            console.log("Login successful for:", user.nombre, "Role:", user.rol);
+                            resolve({ ...user, token: `fake-token-${Date.now()}` });
+                        } else {
+                            console.error("Login failed: Invalid credentials for userId:", userId);
+                            reject({ message: "Usuario o contraseña incorrectos." });
+                        }
+                    }, 500);
+                });
+            },
+
+            // --- API METHODS ---
+            addProduct: function(productData) { return new Promise((resolve) => { const newProduct = { id: `prod_${Date.now()}`, ...productData }; this.products.push(newProduct); resolve(newProduct); }); },
+
+            registrarVendedor: function(vendedorData) {
+                return new Promise((resolve) => {
+                    const newUserId = Math.floor(1000000 + Math.random() * 9000000).toString();
+                    const newUser = {
+                        id: `user_${Date.now()}`,
+                        rol: 'vendedor',
+                        userId: newUserId,
+                        password: 'vendedor',
+                        ...vendedorData
+                    };
+                    this.users.push(newUser);
+                    console.log("Vendedor registrado:", newUser);
+                    resolve(newUser);
+                });
+            },
+
+            registrarVenta: function(ventaData) {
+                 return new Promise((resolve, reject) => {
+                    let totalVenta = 0;
+                    let costoProduccionTotal = 0;
+
+                    const productosDetallados = ventaData.productos.map(item => {
+                        const producto = this.products.find(p => p.id === item.productoId);
+                        if (!producto || producto.stock < item.cantidad) {
+                           reject({ message: `Stock insuficiente para ${producto?.nombre || 'producto'}` });
+                           return null;
+                        }
+                        totalVenta += producto.precio * item.cantidad;
+                        costoProduccionTotal += producto.costoProduccion * item.cantidad;
+                        producto.stock -= item.cantidad;
+                        return { ...item, nombre: producto.nombre, precioUnitario: producto.precio, costoProduccionUnitario: producto.costoProduccion };
+                    });
+
+                    if(productosDetallados.includes(null)) return;
+
+                    const gananciaVendedor = totalVenta * (32/280); // As per formula GNF=32 for PF=280
+                    const gananciaNeta = totalVenta - costoProduccionTotal - gananciaVendedor;
+
+                    const newSale = {
+                        id: `venta_${Date.now()}`,
+                        vendedorId: ventaData.vendedorId, // This should be the ID of the seller, e.g., 'vendedor1'
+                        productos: productosDetallados,
+                        total: totalVenta,
+                        costoProduccionTotal,
+                        gananciaVendedor,
+                        gananciaNeta,
+                        fecha: new Date().toISOString()
+                    };
+                    this.sales.push(newSale);
+                    resolve(newSale);
+                });
+            },
+
+            getSellers: function() { return new Promise((resolve) => resolve(this.users.filter(u => u.rol === 'vendedor'))); },
+            getSales: function() { return new Promise((resolve) => {
+                const salesWithSellerInfo = this.sales.map(sale => {
+                    const seller = this.users.find(u => u.id === sale.vendedorId);
+                    return {...sale, sellerName: seller ? seller.negocio : 'Desconocido' };
+                })
+                resolve(salesWithSellerInfo);
+            }); },
+            getProducts: function() { return new Promise((resolve) => resolve(this.products)); },
+
+            updateProduct: function(productId, updatedProductData) {
+                return new Promise((resolve, reject) => {
+                    const productIndex = this.products.findIndex(p => p.id === productId);
+                    if (productIndex !== -1) {
+                        this.products[productIndex] = { ...this.products[productIndex], ...updatedProductData };
+                        // Ensure numeric fields are correctly typed if they became strings
+                        this.products[productIndex].precio = parseFloat(this.products[productIndex].precio);
+                        this.products[productIndex].stock = parseInt(this.products[productIndex].stock);
+                        this.products[productIndex].costoProduccion = parseFloat(this.products[productIndex].costoProduccion);
+                        console.log("Product updated:", this.products[productIndex]);
+                        resolve(this.products[productIndex]);
+                    } else {
+                        console.error("Update failed: Product not found with id", productId);
+                        reject({ message: "Producto no encontrado." });
+                    }
+                });
+            }
+        };
+
+        // Helper function to get ISO 8601 week number and year
+        function getYearWeek(dateString) {
+            const date = new Date(dateString);
+            date.setHours(0, 0, 0, 0);
+            // Thursday in current week decides the year.
+            date.setDate(date.getDate() + 3 - (date.getDay() + 6) % 7);
+            // January 4 is always in week 1.
+            const week1 = new Date(date.getFullYear(), 0, 4);
+            // Adjust to Thursday in week 1 and count number of weeks from date to week1.
+            const weekNumber = 1 + Math.round(((date.getTime() - week1.getTime()) / 86400000 - 3 + (week1.getDay() + 6) % 7) / 7);
+            return `${date.getFullYear()}-W${String(weekNumber).padStart(2, '0')}`;
+        }
+
+        // ====================================================================
+        // REACT COMPONENTS
+        // ====================================================================
+        const { useState, useEffect, useMemo, Fragment } = React;
+
+        // --- Leaflet Wrapper (Moved to top) ---
+        if (window.L) {
+            window.ReactLeaflet = {
+                MapContainer: ({ center, zoom, children, scrollWheelZoom, ...props }) => {
+                    const mapRef = React.useRef(null);
+                    const [map, setMap] = React.useState(null);
+                    React.useEffect(() => {
+                        if (mapRef.current && !map) {
+                            const leafletMap = window.L.map(mapRef.current, {
+                                center: center,
+                                zoom: zoom,
+                                scrollWheelZoom: scrollWheelZoom
+                            });
+                            setMap(leafletMap);
+                        }
+                        return () => map?.remove();
+                    }, [mapRef, map]);
+                    React.useEffect(() => {
+                        if (map) map.setView(center, zoom);
+                    }, [center, zoom, map]);
+                    return React.createElement('div', { ref: mapRef, ...props }, map ? React.Children.map(children, child => React.cloneElement(child, { map })) : null);
+                },
+                TileLayer: ({ url, map, ...props }) => {
+                    React.useEffect(() => {
+                        if (!map) return;
+                        const tileLayer = window.L.tileLayer(url, { attribution: '&copy; OpenStreetMap', ...props }).addTo(map);
+                        return () => map.removeLayer(tileLayer);
+                    }, [map, url]);
+                    return null;
+                },
+                Marker: ({ position, map }) => {
+                    React.useEffect(() => {
+                        if (!map) return;
+                        const marker = window.L.marker(position).addTo(map);
+                        return () => map.removeLayer(marker);
+                    }, [map, position]);
+                    React.useEffect(() => {
+                        if (map) map.panTo(position);
+                    }, [position]);
+                    return null;
+                },
+                useMapEvents: (events, map) => {
+                    React.useEffect(() => {
+                        if (!map) return;
+                        for (const event in events) {
+                            map.on(event, events[event]);
+                        }
+                        return () => {
+                            for (const event in events) {
+                                map.off(event, events[event]);
+                            }
+                        };
+                    }, [map, events]);
+                    return null;
+                }
+            };
+        }
+
+        // --- Reusable UI Components ---
+        const InputField = ({ label, ...props }) => ( <div><label className="block text-sm font-medium text-gray-700 mb-1">{label}</label><input {...props} className="mt-1 block w-full px-3 py-2 bg-white border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-[#6f4e37] focus:border-[#6f4e37] sm:text-sm" /></div> );
+        const Spinner = () => ( <div className="flex justify-center items-center"><svg className="animate-spin h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg></div> );
+        const MessageBox = ({ message }) => { if (!message.text) return null; const baseClasses = 'p-3 rounded-lg text-center font-semibold my-3 text-sm'; const typeClasses = { success: 'bg-green-100 text-green-800', error: 'bg-red-100 text-red-800', info: 'bg-blue-100 text-blue-800' }; return <div className={`${baseClasses} ${typeClasses[message.type]}`}>{message.text}</div>; };
+
+        // --- Map Component ---
+        function MapaSelector({ position, onPositionChange }) {
+            const { MapContainer, TileLayer, Marker, useMapEvents } = window.ReactLeaflet;
+            function LocationMarker() {
+                useMapEvents({ click(e) { onPositionChange(e.latlng); } }, map);
+                return position ? <Marker position={position}></Marker> : null;
+            }
+            return (
+                <div className="border rounded-lg overflow-hidden shadow-md">
+                    <MapContainer center={position || [15.93, -93.12]} zoom={13} scrollWheelZoom={true} style={{ height: '350px', width: '100%' }}>
+                        <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
+                        <LocationMarker />
+                    </MapContainer>
+                </div>
+            );
+        }
+        const MapaSelectorWrapper = (props) => { if (!window.ReactLeaflet) return <div className="text-center p-4 bg-red-100 rounded-lg">Cargando mapa...</div>; return <MapaSelector {...props} />; };
+
+        // --- Login Screen ---
+        function LoginScreen({ onLoginSuccess }) {
+            const [userId, setUserId] = useState('');
+            const [password, setPassword] = useState('');
+            const [error, setError] = useState('');
+            const [isLoading, setIsLoading] = useState(false);
+
+            const handleSubmit = (e) => {
+                e.preventDefault();
+                setError('');
+                setIsLoading(true);
+                FAKE_API.login(userId, password)
+                    .then(user => {
+                        onLoginSuccess(user);
+                    })
+                    .catch(err => {
+                        setError(err.message);
+                    })
+                    .finally(() => {
+                        setIsLoading(false);
+                    });
+            };
+
+            return (
+                <div className="flex items-center justify-center min-h-screen bg-cover" style={{backgroundImage: "url('https://placehold.co/1920x1080/3e2723/f5f0e1?text=El+Aroma+Ideal')"}}>
+                    <div className="w-full max-w-md p-8 space-y-6 bg-white bg-opacity-90 rounded-2xl shadow-2xl backdrop-blur-sm">
+                        <div className="text-center">
+                            <h1 className="text-4xl font-extrabold text-[#3e2723]">Acceso de Administrador</h1>
+                            <p className="text-gray-600 mt-2">Bienvenido al sistema de gestión.</p>
+                        </div>
+                        <form onSubmit={handleSubmit} className="space-y-6">
+                             <InputField label="Usuario" name="user" type="text" value={userId} onChange={e => setUserId(e.target.value)} required />
+                             <InputField label="Contraseña" name="password" type="password" value={password} onChange={e => setPassword(e.target.value)} required />
+                             {error && <p className="text-red-600 text-sm text-center">{error}</p>}
+                             <div>
+                                <button type="submit" disabled={isLoading} className="w-full flex justify-center items-center gap-3 bg-[#3e2723] hover:bg-black text-white font-bold py-3 px-4 rounded-lg transition duration-300 disabled:bg-gray-400">
+                                    {isLoading ? <Spinner/> : <i className="fas fa-sign-in-alt"></i>}
+                                    {isLoading ? 'Ingresando...' : 'Ingresar'}
+                                </button>
+                             </div>
+                        </form>
+                    </div>
+                </div>
+            )
+        }
+
+        // --- Main App Layout (after login) ---
+        function MainApp({ user, onLogout }) { // Accept user prop (Step 3 fix)
+            const [view, setView] = useState(user.rol === 'admin' ? 'dashboard' : 'ventas'); // Default view based on role (Step 3 fix)
+
+            // Render correct view based on initial role and selected view
+            const renderView = () => { // (Step 3 fix + Step 8 modification)
+                if (user.rol === 'admin') {
+                    switch (view) {
+                        case 'ventas': return <PanelVentas loggedInUser={user} />; // Pass user to PanelVentas (Step 8)
+                        case 'dashboard': return <Dashboard />;
+                        default: return <Dashboard />;
+                    }
+                } else if (user.rol === 'vendedor') {
+                    if (view !== 'ventas') setView('ventas');
+                    return <PanelVentas loggedInUser={user} />; // Pass user to PanelVentas (Step 8)
+                }
+                return <div>Error: Usuario sin rol definido.</div>;
+            };
+
+            const NavButton = ({ targetView, icon, children }) => (
+                <button
+                    onClick={() => setView(targetView)}
+                    className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-colors font-semibold ${view === targetView ? 'bg-[#6f4e37] text-white shadow-lg' : 'bg-white text-[#6f4e37] hover:bg-gray-100'}`}
+                >
+                    <i className={`fas ${icon}`}></i> <span>{children}</span>
+                </button>
+            );
+
+            return (
+                <div className="container mx-auto p-2 sm:p-4 md:p-6">
+                    <header className="mb-8 text-center">
+                        <h1 className="text-4xl md:text-5xl font-extrabold text-[#3e2723]">Café "El Aroma Ideal"</h1>
+                        <p className="text-gray-600 mt-2">Sistema de Gestión y Ventas</p>
+                    </header>
+                    <nav className="flex justify-center items-center gap-2 sm:gap-4 mb-8 bg-[#d7ccc8] p-2 rounded-xl shadow-inner w-fit mx-auto">
+                        {/* Conditional rendering of NavButtons based on role (Step 3 fix) */}
+                        {user.rol === 'vendedor' && (
+                            <NavButton targetView="ventas" icon="fa-store">Punto de Venta</NavButton>
+                        )}
+                        {user.rol === 'admin' && (
+                            <Fragment>
+                                <NavButton targetView="ventas" icon="fa-store">Punto de Venta</NavButton>
+                                <NavButton targetView="dashboard" icon="fa-tachometer-alt">Admin</NavButton>
+                            </Fragment>
+                        )}
+                        <button onClick={onLogout} className="flex items-center gap-2 px-4 py-2 rounded-lg transition-colors font-semibold bg-red-100 text-red-700 hover:bg-red-200">
+                            <i className="fas fa-sign-out-alt"></i><span>Salir</span>
+                        </button>
+                    </nav>
+                    <main>{renderView()}</main>
+                    <footer className="text-center mt-12 text-gray-500 text-sm"><p>Gestión de Ventas de Café.</p></footer>
+                </div>
+            );
+        }
+
+        // --- ADMIN DASHBOARD ---
+        function Dashboard() {
+            const [adminView, setAdminView] = useState('stats');
+            const [productToEdit, setProductToEdit] = useState(null);
+            const [productListRefreshKey, setProductListRefreshKey] = useState(Date.now()); // For refreshing product list
+
+            const handleEditProduct = (product) => {
+                setProductToEdit(product);
+                // No need to change adminView directly, renderAdminView will show EditProductForm
+            };
+
+            const handleProductUpdated = () => {
+                setProductToEdit(null);
+                setAdminView('manageProducts'); // Go to product list
+                setProductListRefreshKey(Date.now()); // Trigger refresh in ProductListAdmin
+            };
+
+            const handleCancelEdit = () => {
+                setProductToEdit(null);
+                if (adminView !== 'manageProducts') setAdminView('manageProducts'); // Ensure we are on product list
+            };
+
+            const handleViewChange = (targetView) => {
+                setProductToEdit(null); // Clear any product being edited when changing main admin views
+                setAdminView(targetView);
+            }
+
+            const AdminNavButton = ({ targetView, icon, children }) => (
+                <button onClick={() => handleViewChange(targetView)} className={`flex-1 sm:flex-initial flex items-center justify-center gap-2 px-3 py-2 text-sm sm:text-base rounded-lg transition-colors font-semibold ${adminView === targetView && !productToEdit ? 'bg-[#3e2723] text-white shadow-md' : 'bg-white text-gray-700 hover:bg-gray-200'}`}>
+                    <i className={`fas ${icon}`}></i> <span>{children}</span>
+                </button>
+            );
+
+            const renderAdminView = () => {
+                if (productToEdit) {
+                    return <EditProductForm productToEdit={productToEdit} onProductUpdated={handleProductUpdated} onCancelEdit={handleCancelEdit} />;
+                }
+                switch(adminView) {
+                    case 'registerSeller': return <RegistroVendedor />;
+                    case 'addProduct': return <AddProductForm onProductAdded={() => setProductListRefreshKey(Date.now())} />;
+                    case 'stats': return <SalesStats />;
+                    case 'manageProducts': return <ProductListAdmin onEditProduct={handleEditProduct} refreshKey={productListRefreshKey} />;
+                    case 'viewSellers': return <ViewSellers />; // New case
+                    default: return <SalesStats />;
+                }
+            };
+
+            return (
+                <div className="bg-white p-4 sm:p-8 rounded-2xl shadow-lg w-full max-w-6xl mx-auto">
+                    <h2 className="text-2xl sm:text-3xl font-bold mb-2 text-[#4b3832]">Panel de Administrador</h2>
+                    <p className="text-gray-500 mb-6">Gestiona vendedores, productos y estadísticas.</p>
+                    <nav className="flex flex-wrap justify-center items-center gap-2 sm:gap-4 mb-8 bg-[#f5f0e1] p-2 rounded-xl shadow-inner w-full mx-auto">
+                        <AdminNavButton targetView="stats" icon="fa-chart-bar">Estadísticas de Venta</AdminNavButton>
+                        <AdminNavButton targetView="registerSeller" icon="fa-user-plus">Registrar Vendedor</AdminNavButton>
+                        <AdminNavButton targetView="addProduct" icon="fa-plus-circle">Añadir Producto</AdminNavButton>
+                        <AdminNavButton targetView="manageProducts" icon="fa-tasks">Gestionar Productos</AdminNavButton>
+                        <AdminNavButton targetView="viewSellers" icon="fa-users">Ver Vendedores</AdminNavButton> {/* New Nav Button */}
+                    </nav>
+                    <main>{renderAdminView()}</main>
+                </div>
+            )
+        }
+
+        // --- Admin: Sales Statistics ---
+        function SalesStats() {
+            const [sales, setSales] = useState([]);
+            const [weeklySalesData, setWeeklySalesData] = useState({});
+            const [bestWeeks, setBestWeeks] = useState([]);
+
+            useEffect(() => {
+                FAKE_API.getSales().then(fetchedSales => {
+                    setSales(fetchedSales);
+
+                    if (fetchedSales.length > 0) {
+                        const salesByWeek = fetchedSales.reduce((acc, sale) => {
+                            const week = getYearWeek(sale.fecha);
+                            acc[week] = (acc[week] || 0) + sale.total;
+                            return acc;
+                        }, {});
+                        setWeeklySalesData(salesByWeek);
+
+                        if (Object.keys(salesByWeek).length > 0) {
+                            const maxSaleAmount = Math.max(...Object.values(salesByWeek));
+                            const topWeeks = Object.entries(salesByWeek)
+                                .filter(([week, total]) => total === maxSaleAmount)
+                                .map(([week]) => week);
+                            setBestWeeks(topWeeks);
+                        } else {
+                           setBestWeeks([]);
+                        }
+                    } else {
+                        setWeeklySalesData({});
+                        setBestWeeks([]);
+                    }
+                });
+            }, []);
+
+            return (
+                <div>
+                    <h3 className="text-xl font-semibold mb-4 text-gray-700">Reporte de Ventas</h3>
+                    {sales.length > 0 && bestWeeks.length > 0 && (
+                        <div className="my-6 bg-green-50 p-4 rounded-lg shadowring-1 ring-green-200">
+                            <h4 className="text-lg font-semibold text-green-800 mb-2">🏆 Mejor(es) Semana(s) en Ventas</h4>
+                            <p className="text-md text-green-700">
+                                <span className="font-bold">{bestWeeks.join(', ')}</span>
+                            </p>
+                            <p className="text-sm text-gray-600 mt-1">
+                                Total vendido en esta(s) semana(s): <span className="font-semibold">${(weeklySalesData[bestWeeks[0]] || 0).toFixed(2)}</span>
+                            </p>
+                        </div>
+                    )}
+                    {sales.length > 0 && bestWeeks.length === 0 && Object.keys(weeklySalesData).length > 0 && (
+                         <div className="my-6 bg-blue-50 p-4 rounded-lg shadow ring-1 ring-blue-200">
+                            <h4 className="text-lg font-semibold text-blue-800 mb-2">📈 Rendimiento Semanal</h4>
+                            <p className="text-md text-blue-700">Todas las semanas tuvieron ventas. ¡Buen trabajo!</p>
+                         </div>
+                    )}
+                    <div className="overflow-x-auto bg-gray-50 p-1 sm:p-4 rounded-lg shadow-inner">
+                        <table className="w-full text-left text-xs sm:text-sm">
+                            <thead className="bg-gray-200">
+                                <tr>
+                                    <th className="p-2">Fecha</th>
+                                    <th className="p-2">Vendedor</th>
+                                    <th className="p-2">Productos</th>
+                                    <th className="p-2 text-center">Venta Total</th>
+                                    <th className="p-2 text-center text-orange-600">Costo Prod.</th>
+                                    <th className="p-2 text-center text-blue-600">Ganancia Vendedor</th>
+                                    <th className="p-2 text-center text-green-600">Ganancia Neta</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {sales.length === 0 && <tr><td colSpan="7" className="text-center p-8 text-gray-500">No hay ventas registradas.</td></tr>}
+                                {sales.map(sale => (
+                                    <tr key={sale.id} className="border-b hover:bg-gray-100">
+                                        <td className="p-2 align-top">{new Date(sale.fecha).toLocaleDateString()}</td>
+                                        <td className="p-2 align-top font-semibold">{sale.sellerName}</td>
+                                        <td className="p-2 align-top">
+                                            <ul className="list-disc list-inside">
+                                                {sale.productos.map(p => <li key={p.productoId}>{p.cantidad} x {p.nombre}</li>)}
+                                            </ul>
+                                        </td>
+                                        <td className="p-2 align-top text-center font-bold">${sale.total.toFixed(2)}</td>
+                                        <td className="p-2 align-top text-center text-orange-600">${sale.costoProduccionTotal.toFixed(2)}</td>
+                                        <td className="p-2 align-top text-center text-blue-600">${sale.gananciaVendedor.toFixed(2)}</td>
+                                        <td className="p-2 align-top text-center text-green-600 font-bold">${sale.gananciaNeta.toFixed(2)}</td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            );
+        }
+
+        // --- Admin: View Sellers ---
+        function ViewSellers() {
+            const [sellers, setSellers] = useState([]);
+            const [sales, setSales] = useState([]);
+            const [expandedSellerId, setExpandedSellerId] = useState(null);
+
+            useEffect(() => {
+                FAKE_API.getSellers().then(setSellers);
+                FAKE_API.getSales().then(fetchedSales => {
+                    // Ensure sales are fully populated with seller info if needed, though FAKE_API.getSales should do this
+                    setSales(fetchedSales);
+                });
+            }, []);
+
+            const toggleSellerSales = (sellerId) => {
+                setExpandedSellerId(expandedSellerId === sellerId ? null : sellerId);
+            };
+
+            const getSalesForSeller = (sellerId) => {
+                return sales.filter(sale => sale.vendedorId === sellerId);
+            };
+
+            return (
+                <div>
+                    <h3 className="text-xl font-semibold mb-6 text-gray-700">Listado de Vendedores y sus Ventas</h3>
+                    {sellers.length === 0 && <p className="text-gray-500 py-4 text-center">No hay vendedores registrados.</p>}
+                    <div className="space-y-4">
+                        {sellers.map(seller => {
+                            const sellerSales = getSalesForSeller(seller.id);
+                            return (
+                                <div key={seller.id} className="bg-gray-50 p-3 sm:p-4 rounded-lg shadow-sm transition-all duration-300 ease-in-out">
+                                    <div className="flex justify-between items-center cursor-pointer hover:bg-gray-100 p-2 -m-2 rounded" onClick={() => toggleSellerSales(seller.id)}>
+                                        <div>
+                                            <h4 className="font-bold text-md sm:text-lg text-[#6f4e37]">{seller.negocio}
+                                                <span className="text-sm font-normal text-gray-600 ml-2">({seller.nombre})</span>
+                                            </h4>
+                                            <p className="text-xs sm:text-sm text-gray-500">ID de Usuario: {seller.userId} | Tel: {seller.telefono}</p>
+                                            <p className="text-xs text-gray-400">ID Interno: {seller.id}</p>
+                                        </div>
+                                        <button className="text-[#3e2723] hover:text-black text-lg sm:text-xl p-2">
+                                            <i className={`fas ${expandedSellerId === seller.id ? 'fa-chevron-up' : 'fa-chevron-down'} transition-transform duration-300`}></i>
+                                        </button>
+                                    </div>
+                                    {expandedSellerId === seller.id && (
+                                        <div className="mt-4 pt-3 border-t border-gray-200 animate-fadeIn">
+                                            <h5 className="text-sm sm:text-md font-semibold text-gray-600 mb-2">Historial de Ventas ({sellerSales.length}):</h5>
+                                            {sellerSales.length === 0 ? (
+                                                <p className="text-xs sm:text-sm text-gray-500 italic">Este vendedor aún no tiene ventas registradas.</p>
+                                            ) : (
+                                                <ul className="space-y-2 text-xs sm:text-sm max-h-60 overflow-y-auto pr-2">
+                                                    {sellerSales.map(sale => (
+                                                        <li key={sale.id} className="p-2 bg-white rounded shadow-xs border border-gray-100">
+                                                            <div className="flex justify-between items-baseline">
+                                                                <p><strong>Fecha:</strong> {new Date(sale.fecha).toLocaleDateString()}</p>
+                                                                <p><strong>Total:</strong> <span className="font-semibold text-green-600">${sale.total.toFixed(2)}</span></p>
+                                                            </div>
+                                                            <p className="text-xs text-gray-500 mt-1">Productos:</p>
+                                                            <ul className="list-disc list-inside pl-4 text-gray-700">
+                                                                {sale.productos.map(p => <li key={p.productoId}>{p.cantidad} x {p.nombre} (@ ${p.precioUnitario.toFixed(2)})</li>)}
+                                                            </ul>
+                                                        </li>
+                                                    ))}
+                                                </ul>
+                                            )}
+                                        </div>
+                                    )}
+                                </div>
+                            );
+                        })}
+                    </div>
+                </div>
+            );
+        }
+
+        // --- Admin: Register Seller ---
+        function RegistroVendedor() {
+            const [formData, setFormData] = useState({ nombre: '', telefono: '', negocio: '', ubicacion: { lat: 15.93, lng: -93.12 }, fotos: [] });
+            const [message, setMessage] = useState({});
+            const [isLoading, setIsLoading] = useState(false);
+
+            const handleInputChange = (e) => { const { name, value } = e.target; setFormData(p => ({ ...p, [name]: value })); };
+            const handleLocationChange = (latlng) => { setFormData(p => ({ ...p, ubicacion: { lat: latlng.lat, lng: latlng.lng }})); };
+            const handleGetCurrentLocation = () => { if (navigator.geolocation) { setIsLoading(true); setMessage({type: 'info', text: 'Obteniendo ubicación...'}); navigator.geolocation.getCurrentPosition((position) => { const { latitude, longitude } = position.coords; setFormData(p => ({ ...p, ubicacion: { lat: latitude, lng: longitude }})); setIsLoading(false); setMessage({type: 'success', text: 'Ubicación obtenida.'}); }, (error) => { setIsLoading(false); setMessage({type: 'error', text: 'No se pudo obtener la ubicación.'}); }); } else { setMessage({type: 'error', text: 'Geolocalización no soportada.'}); } };
+            const handleFileChange = (e) => { if (e.target.files.length) { setMessage({type: 'info', text: `${e.target.files.length} foto(s) seleccionada(s).`}); setFormData(p => ({...p, fotos: Array.from(e.target.files) }))} };
+
+            const handleSubmit = (e) => {
+                e.preventDefault();
+                setIsLoading(true);
+                FAKE_API.registrarVendedor(formData)
+                    .then(response => {
+                        setMessage({ type: 'success', text: `Vendedor "${response.negocio}" registrado! Usuario: ${response.userId}, Contraseña: ${response.password}` });
+                        setFormData({ nombre: '', telefono: '', negocio: '', ubicacion: { lat: 15.93, lng: -93.12 }, fotos: [] });
+                        e.target.reset(); // Clear file input
+                    })
+                    .catch(err => setMessage({ type: 'error', text: err.message }))
+                    .finally(() => setIsLoading(false));
+            };
+
+            return (
+                <div className="max-w-3xl mx-auto bg-gray-50 p-6 rounded-lg">
+                    <h3 className="text-xl font-semibold mb-4 text-gray-700">Registrar Nuevo Vendedor</h3>
+                    <form onSubmit={handleSubmit} className="space-y-4">
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <InputField label="Nombre del Vendedor" name="nombre" value={formData.nombre} onChange={handleInputChange} required />
+                            <InputField label="Número Telefónico" name="telefono" type="tel" value={formData.telefono} onChange={handleInputChange} required />
+                        </div>
+                        <InputField label="Nombre del Negocio" name="negocio" value={formData.negocio} onChange={handleInputChange} required />
+                        <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-1">Fotos del Exterior</label>
+                            <input type="file" name="fotos" onChange={handleFileChange} multiple accept="image/*" className="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-[#8d6e63] file:text-white hover:file:bg-[#6f4e37]"/>
+                        </div>
+                        <div>
+                            <h4 className="text-md font-semibold mb-2 text-gray-700">Ubicación del Negocio</h4>
+                            <div className="flex items-center gap-4 mb-3">
+                                <button type="button" onClick={handleGetCurrentLocation} className="flex items-center gap-2 bg-blue-500 hover:bg-blue-600 text-white font-bold py-2 px-4 rounded-lg transition duration-300 shadow text-sm">
+                                    <i className="fas fa-location-arrow"></i> Usar mi ubicación
+                                </button>
+                                <span className="text-gray-600 text-xs">Lat: {formData.ubicacion.lat.toFixed(4)}, Lng: {formData.ubicacion.lng.toFixed(4)}</span>
+                            </div>
+                            <MapaSelectorWrapper position={formData.ubicacion} onPositionChange={handleLocationChange} />
+                        </div>
+                        <MessageBox message={message} />
+                        <button type="submit" disabled={isLoading} className="w-full bg-[#3e2723] hover:bg-black text-white font-bold py-3 px-4 rounded-lg transition duration-300 disabled:bg-gray-400 flex items-center justify-center gap-3 text-lg">
+                            {isLoading ? <Spinner /> : <i className="fas fa-user-plus"></i>}
+                            {isLoading ? 'Registrando...' : 'Registrar Vendedor'}
+                        </button>
+                    </form>
+                </div>
+            );
+        }
+
+        // --- Admin: Product List ---
+        function ProductListAdmin({ onEditProduct, refreshKey }) {
+            const [products, setProducts] = useState([]);
+
+            useEffect(() => {
+                console.log("ProductListAdmin fetching products, refreshKey:", refreshKey);
+                FAKE_API.getProducts().then(setProducts);
+            }, [refreshKey]); // Refetch when refreshKey changes
+
+            return (
+                <div>
+                    <h3 className="text-xl font-semibold mb-4 text-gray-700">Gestionar Productos</h3>
+                    {products.length === 0 && <p className="text-gray-500">No hay productos para mostrar.</p>}
+                    <div className="space-y-3">
+                        {products.map(product => (
+                            <div key={product.id} className="bg-gray-50 p-3 sm:p-4 rounded-lg shadow-sm flex flex-col sm:flex-row justify-between sm:items-center gap-2">
+                                <div className="flex-grow">
+                                    <h4 className="font-bold text-md text-[#6f4e37]">{product.nombre}</h4>
+                                    <p className="text-sm text-gray-600">Precio: ${product.precio.toFixed(2)} - Stock: {product.stock} - Costo: ${product.costoProduccion.toFixed(2)}</p>
+                                    <p className="text-xs text-gray-500 mt-1">ID: {product.id} - Desc: {product.descripcion?.substring(0,50)}...</p>
+                                </div>
+                                <button
+                                    onClick={() => onEditProduct(product)}
+                                    className="bg-blue-500 hover:bg-blue-600 text-white font-semibold py-2 px-3 sm:px-4 rounded-lg text-xs sm:text-sm transition duration-300 self-start sm:self-center"
+                                >
+                                    <i className="fas fa-edit mr-1 sm:mr-2"></i>Editar
+                                </button>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            );
+        }
+
+        // --- Admin: Edit Product Form ---
+        function EditProductForm({ productToEdit, onProductUpdated, onCancelEdit }) {
+            const [formData, setFormData] = useState(null); // Initialize as null
+            const [message, setMessage] = useState({});
+            const [isLoading, setIsLoading] = useState(false);
+
+            useEffect(() => {
+                // Deep copy productToEdit to avoid modifying the original object from the list
+                if (productToEdit) {
+                    setFormData(JSON.parse(JSON.stringify(productToEdit)));
+                }
+                setMessage({});
+            }, [productToEdit]);
+
+            const handleInputChange = (e) => {
+                const { name, value } = e.target;
+                setFormData(prev => ({ ...prev, [name]: value }));
+            };
+
+            const handleSubmit = (e) => {
+                e.preventDefault();
+                if (!formData) return;
+                setIsLoading(true);
+                setMessage({});
+
+                const { id, ...productData } = formData;
+                const processedData = {
+                    ...productData,
+                    precio: parseFloat(productData.precio),
+                    stock: parseInt(productData.stock),
+                    costoProduccion: parseFloat(productData.costoProduccion),
+                    foto: productData.foto || `https://placehold.co/400x400/8d6e63/ffffff?text=${encodeURIComponent(productData.nombre)}`
+                };
+
+                FAKE_API.updateProduct(id, processedData)
+                    .then((updatedProduct) => {
+                        setMessage({ type: 'success', text: `Producto "${updatedProduct.nombre}" actualizado con éxito.` });
+                        setIsLoading(false);
+                        if(onProductUpdated) onProductUpdated(updatedProduct);
+                    })
+                    .catch(err => {
+                        setMessage({ type: 'error', text: err.message });
+                        setIsLoading(false);
+                    });
+            };
+
+            if (!formData) { // If formData is not yet set (e.g. productToEdit was null initially)
+                return <div className="text-center p-4">Cargando datos del producto...</div>;
+            }
+
+            return (
+                <div className="max-w-2xl mx-auto bg-gray-50 p-6 rounded-lg">
+                    <h3 className="text-xl font-semibold mb-4 text-gray-700">Editar Producto: <span className="text-[#6f4e37]">{formData.nombre}</span></h3>
+                    <form onSubmit={handleSubmit} className="space-y-4">
+                        <InputField label="Nombre del Producto" name="nombre" value={formData.nombre} onChange={handleInputChange} required />
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                            <InputField label="Precio de Venta" name="precio" type="number" step="0.01" value={formData.precio} onChange={handleInputChange} required />
+                            <InputField label="Costo de Producción" name="costoProduccion" type="number" step="0.01" value={formData.costoProduccion} onChange={handleInputChange} required />
+                            <InputField label="Stock" name="stock" type="number" value={formData.stock} onChange={handleInputChange} required />
+                        </div>
+                        <InputField label="Descripción" name="descripcion" tagName="textarea" value={formData.descripcion} onChange={handleInputChange} />
+                        <InputField label="URL de la Foto (Opcional)" name="foto" value={formData.foto} onChange={handleInputChange} placeholder="https://example.com/image.jpg" />
+                        <MessageBox message={message} />
+                        <div className="flex gap-4 pt-2">
+                            <button
+                                type="button"
+                                onClick={onCancelEdit}
+                                className="w-1/2 bg-gray-200 hover:bg-gray-300 text-gray-700 font-bold py-3 px-4 rounded-lg transition duration-300"
+                            >
+                                Cancelar
+                            </button>
+                            <button
+                                type="submit"
+                                disabled={isLoading}
+                                className="w-1/2 bg-[#3e2723] hover:bg-black text-white font-bold py-3 px-4 rounded-lg transition duration-300 disabled:bg-gray-400 flex items-center justify-center gap-2 text-lg"
+                            >
+                                {isLoading ? <Spinner /> : <i className="fas fa-save"></i>}
+                                {isLoading ? 'Actualizando...' : 'Actualizar Producto'}
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            );
+        }
+
+        // --- PanelVentas ---
+        function PanelVentas({ loggedInUser }) { // Accept loggedInUser
+            const [products, setProducts] = useState([]);
+            const [cart, setCart] = useState([]);
+            const [message, setMessage] = useState({ type: '', text: '' });
+            const [isLoading, setIsLoading] = useState(false);
+
+            const canRegisterSale = loggedInUser && loggedInUser.rol === 'vendedor';
+
+            useEffect(() => { FAKE_API.getProducts().then(setProducts); }, []);
+
+            const addToCart = (product) => { setCart(currentCart => { const existingItem = currentCart.find(item => item.productoId === product.id); if (existingItem) { return currentCart.map(item => item.productoId === product.id ? { ...item, cantidad: item.cantidad + 1 } : item); } return [...currentCart, { productoId: product.id, nombre: product.nombre, precio: product.precio, cantidad: 1, foto: product.foto }]; }); };
+            const updateQuantity = (productoId, newQuantity) => { const quantity = parseInt(newQuantity, 10); setCart(currentCart => { if (quantity <= 0) return currentCart.filter(item => item.productoId !== productoId); return currentCart.map(item => item.productoId === productoId ? { ...item, cantidad: quantity } : item); }); };
+            const total = useMemo(() => cart.reduce((sum, p) => sum + (p.precio * p.cantidad), 0), [cart]);
+
+            const handleRegisterSale = () => {
+                if (!canRegisterSale) {
+                    setMessage({type: 'error', text: 'Solo los vendedores autenticados pueden registrar ventas.'});
+                    return;
+                }
+                if (cart.length === 0) {
+                    setMessage({type: 'error', text: 'El carrito está vacío.'});
+                    return;
+                }
+                setIsLoading(true);
+                setMessage({ type: 'info', text: 'Procesando venta...' });
+                const ventaData = {
+                    vendedorId: loggedInUser.id, // Use logged-in seller's ID
+                    productos: cart.map(({ productoId, cantidad }) => ({ productoId, cantidad }))
+                };
+                FAKE_API.registrarVenta(ventaData).then(response => {
+                    setMessage({ type: 'success', text: `Venta #${response.id} registrada con éxito!` });
+                    setCart([]);
+                    FAKE_API.getProducts().then(setProducts);
+                }).catch(error => setMessage({ type: 'error', text: error.message })).finally(() => setIsLoading(false));
+            }
+
+            return ( <div className="bg-white p-4 sm:p-8 rounded-2xl shadow-lg w-full max-w-6xl mx-auto"> <h2 className="text-2xl sm:text-3xl font-bold mb-6 text-[#4b3832] border-b-2 border-[#d7ccc8] pb-4">Punto de Venta de Café</h2> <div className="grid grid-cols-1 lg:grid-cols-3 gap-8"> <div className="lg:col-span-2"> <h3 className="text-xl font-semibold mb-4 text-gray-700">Catálogo de Productos</h3> <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4"> {products.map(product => ( <div key={product.id} className="border border-gray-200 bg-[#fff8f0] rounded-lg p-4 flex flex-col justify-between shadow-sm hover:shadow-xl transition-shadow duration-300"> <img src={product.foto} alt={product.nombre} className="w-full h-40 object-cover rounded-md mb-4"/> <div className="flex-grow"> <h4 className="font-bold text-lg text-[#6f4e37]">{product.nombre}</h4> <p className="text-sm text-gray-600 mb-2">{product.descripcion}</p> </div> <div className="mt-2"> <p className="text-xl font-extrabold text-[#4b3832]">${product.precio.toFixed(2)}</p> <p className="text-xs text-gray-500">Disponibles: {product.stock}</p> </div> <button onClick={() => addToCart(product)} disabled={!canRegisterSale || product.stock === 0} className="mt-4 bg-[#8d6e63] hover:bg-[#6f4e37] text-white font-bold py-2 px-4 rounded-lg transition duration-300 w-full flex items-center justify-center gap-2 disabled:bg-gray-400 disabled:cursor-not-allowed"> <i className="fas fa-cart-plus"></i> Agregar </button> </div> ))} </div> </div> <div className="lg:col-span-1 bg-[#fdfaf6] p-4 sm:p-6 rounded-lg shadow-inner"> <h3 className="text-xl font-semibold mb-4 text-gray-700">Tu Pedido</h3> <div className="space-y-3 min-h-[200px] max-h-[40vh] overflow-y-auto pr-2"> {cart.length === 0 ? ( <p className="text-gray-500 text-center py-10">Agrega productos del catálogo.</p> ) : ( cart.map(item => ( <div key={item.productoId} className="flex justify-between items-center bg-white p-2 rounded-lg shadow-sm"> <img src={item.foto} alt={item.nombre} className="w-12 h-12 object-cover rounded-md"/> <div className="flex-grow mx-2"> <p className="font-semibold text-sm">{item.nombre}</p> <p className="text-xs text-gray-500">${item.precio.toFixed(2)}</p> </div> <input type="number" value={item.cantidad} onChange={(e) => updateQuantity(item.productoId, e.target.value)} className="w-16 p-1 border rounded text-center" min="0"/> </div> )) )} </div> <div className="border-t-2 border-dashed border-gray-300 pt-4 mt-4 space-y-4"> <div className="flex justify-between text-xl font-bold text-[#4b3832]"> <span>Total:</span> <span>${total.toFixed(2)}</span> </div> <MessageBox message={message} /> {!canRegisterSale && <p className="text-sm text-center text-red-600 p-2 bg-red-50 rounded-md">El usuario actual ({loggedInUser?.rol}) no puede registrar ventas.</p>} <button onClick={handleRegisterSale} disabled={isLoading || cart.length === 0 || !canRegisterSale} className="w-full bg-[#3e2723] hover:bg-black text-white font-bold py-3 px-4 rounded-lg transition duration-300 disabled:bg-gray-400 flex items-center justify-center gap-3 text-lg"> {isLoading ? <Spinner /> : <i className="fas fa-check"></i>} {isLoading ? 'Procesando...' : 'Confirmar Venta'} </button> </div> </div> </div> </div> );
+        }
+
+        // --- Admin: Add Product Form (No AI) ---
+        function AddProductForm({ onProductAdded }) { // Accept onProductAdded callback
+            const [formData, setFormData] = useState({ nombre: '', precio: '', stock: '', descripcion: '', foto: '', costoProduccion: '' });
+            const [message, setMessage] = useState({});
+            const [isLoading, setIsLoading] = useState(false);
+            const handleInputChange = (e) => { const { name, value } = e.target; setFormData(p => ({ ...p, [name]: value })); };
+            const handleSubmit = (e) => {
+                e.preventDefault();
+                setIsLoading(true);
+                setMessage({});
+                const productData = {
+                    ...formData,
+                    precio: parseFloat(formData.precio),
+                    stock: parseInt(formData.stock),
+                    costoProduccion: parseFloat(formData.costoProduccion)
+                };
+                if (!productData.foto) {
+                    productData.foto = `https://placehold.co/400x400/8d6e63/ffffff?text=${encodeURIComponent(productData.nombre)}`;
+                }
+                FAKE_API.addProduct(productData).then((newProduct) => {
+                    setMessage({ type: 'success', text: 'Producto añadido con éxito.' });
+                    setFormData({ nombre: '', precio: '', stock: '', descripcion: '', foto: '', costoProduccion: '' });
+                    if(onProductAdded) onProductAdded(newProduct); // Call the callback
+                }).catch(err => setMessage({ type: 'error', text: err.message })).finally(() => setIsLoading(false));
+            };
+            return ( <div className="max-w-2xl mx-auto bg-gray-50 p-6 rounded-lg"> <h3 className="text-xl font-semibold mb-4 text-gray-700">Nuevo Producto</h3> <form onSubmit={handleSubmit} className="space-y-4"> <InputField label="Nombre del Producto" name="nombre" value={formData.nombre} onChange={handleInputChange} required /> <div className="grid grid-cols-1 sm:grid-cols-3 gap-4"> <InputField label="Precio de Venta" name="precio" type="number" step="0.01" value={formData.precio} onChange={handleInputChange} required /> <InputField label="Costo de Producción" name="costoProduccion" type="number" step="0.01" value={formData.costoProduccion} onChange={handleInputChange} required /> <InputField label="Stock Inicial" name="stock" type="number" value={formData.stock} onChange={handleInputChange} required /> </div> <InputField label="Descripción" name="descripcion" tagName="textarea" value={formData.descripcion} onChange={handleInputChange} /> <InputField label="URL de la Foto (Opcional)" name="foto" value={formData.foto} onChange={handleInputChange} placeholder="https://example.com/image.jpg" /> <MessageBox message={message} /> <button type="submit" disabled={isLoading} className="w-full bg-[#3e2723] hover:bg-black text-white font-bold py-3 px-4 rounded-lg transition duration-300 disabled:bg-gray-400 flex items-center justify-center gap-3 text-lg"> {isLoading ? <Spinner /> : <i className="fas fa-plus-circle"></i>} {isLoading ? 'Añadiendo...' : 'Añadir Producto'} </button> </form> </div> );
+        }
+
+        // --- Main Controller Component ---
+        function App() {
+            const [user, setUser] = useState(null);
+
+            useEffect(() => {
+                // Check for saved session on component mount
+                const savedUser = localStorage.getItem('cafeUser');
+                if (savedUser) {
+                    setUser(JSON.parse(savedUser));
+                }
+            }, []);
+
+            const handleLoginSuccess = (loggedInUser) => {
+                setUser(loggedInUser);
+                localStorage.setItem('cafeUser', JSON.stringify(loggedInUser));
+            };
+
+            const handleLogout = () => {
+                setUser(null);
+                localStorage.removeItem('cafeUser');
+            };
+
+            if (!user) {
+                return <LoginScreen onLoginSuccess={handleLoginSuccess} />;
+            }
+
+            return <MainApp user={user} onLogout={handleLogout} />;
+        }
+
+        // --- Render the App ---
+        const container = document.getElementById('root');
+        const root = ReactDOM.createRoot(container);
+        root.render(<App />);
+
+    </script>
+</body>
+</html>
